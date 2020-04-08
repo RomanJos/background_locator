@@ -1,6 +1,4 @@
-import 'dart:async';
 import 'dart:isolate';
-import 'dart:math';
 import 'dart:ui';
 
 import 'package:background_locator/background_locator.dart';
@@ -9,7 +7,25 @@ import 'package:background_locator/location_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:location_permissions/location_permissions.dart';
 
-import 'file_manager.dart';
+class TheProblem {
+  static String _current;
+
+  static String get current {
+    return _current ?? newCurrent();
+  }
+
+  static String newCurrent() {
+    print('first time');
+    _current = 'First time';
+    return _current;
+  }
+
+  static String overrideCurrent() {
+    print('second time');
+    _current = 'Second time';
+    return _current;
+  }
+}
 
 void main() => runApp(MyApp());
 
@@ -21,11 +37,8 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   ReceivePort port = ReceivePort();
 
-  String logStr = '';
-  bool isRunning;
-  LocationDto lastLocation;
-  DateTime lastTimeLocation;
-  static const String _isolateName = 'LocatorIsolate';
+  String currentValue = '';
+  static final _isolateName = 'LocatorIsolate';
 
   @override
   void initState() {
@@ -38,69 +51,24 @@ class _MyAppState extends State<MyApp> {
     IsolateNameServer.registerPortWithName(port.sendPort, _isolateName);
 
     port.listen(
-      (dynamic data) async {
-        await updateUI(data);
+      (dynamic current) async {
+        print('current from callback: $current');
+        setState(() {
+          currentValue = current;
+        });
       },
     );
-    initPlatformState();
-  }
-
-  static double dp(double val, int places) {
-    double mod = pow(10.0, places);
-    return ((val * mod).round().toDouble() / mod);
-  }
-
-  static String formatDateLog(DateTime date) {
-    return date.hour.toString() +
-        ":" +
-        date.minute.toString() +
-        ":" +
-        date.second.toString();
-  }
-
-  static String formatLog(LocationDto locationDto) {
-    return dp(locationDto.latitude, 4).toString() +
-        " " +
-        dp(locationDto.longitude, 4).toString();
-  }
-
-  static Future<void> setLog(LocationDto data) async {
-    final date = DateTime.now();
-    await FileManager.writeToLogFile(
-        '${formatDateLog(date)} --> ${formatLog(data)}\n');
-  }
-
-  Future<void> updateUI(LocationDto data) async {
-    final log = await FileManager.readLogFile();
-    setState(() {
-      lastLocation = data;
-      lastTimeLocation = DateTime.now();
-      logStr = log;
-    });
-  }
-
-  Future<void> initPlatformState() async {
-    print('Initializing...');
-    await BackgroundLocator.initialize();
-    logStr = await FileManager.readLogFile();
-    print('Initialization done');
-    final _isRunning = await BackgroundLocator.isRegisterLocationUpdate();
-    setState(() {
-      isRunning = _isRunning;
-    });
-    print('Running ${isRunning.toString()}');
+    BackgroundLocator.initialize();
   }
 
   static void callback(LocationDto locationDto) async {
-    print('location in dart: ${locationDto.toString()}');
-    await setLog(locationDto);
     final SendPort send = IsolateNameServer.lookupPortByName(_isolateName);
-    send?.send(locationDto);
+
+    String current = TheProblem.current;
+    send?.send(current);
   }
 
-  static void notificationCallback() {
-    print('notificationCallback');
-  }
+  static void notificationCallback() => null;
 
   @override
   Widget build(BuildContext context) {
@@ -118,37 +86,22 @@ class _MyAppState extends State<MyApp> {
       child: RaisedButton(
         child: Text('Stop'),
         onPressed: () {
-          BackgroundLocator.unRegisterLocationUpdate();
-          setState(() {
-            isRunning = false;
-          });
+          BackgroundLocator.unRegisterLocationUpdate()
+              .then((value) => print('unRegisterLocationUpdate finished'));
         },
       ),
     );
-    final clear = SizedBox(
+    final current = SizedBox(
       width: double.maxFinite,
       child: RaisedButton(
-        child: Text('Clear Log'),
+        child: Text('override current'),
         onPressed: () {
-          FileManager.clearLogFile();
+          TheProblem.overrideCurrent();
           setState(() {
-            logStr = '';
+            currentValue = TheProblem.current;
           });
         },
       ),
-    );
-    String msgStatus = "-";
-    if (isRunning != null) {
-      if (isRunning) {
-        msgStatus = 'Is running';
-      } else {
-        msgStatus = 'Is not running';
-      }
-    }
-    final status = Text("Status: $msgStatus");
-
-    final log = Text(
-      logStr,
     );
 
     return MaterialApp(
@@ -162,7 +115,14 @@ class _MyAppState extends State<MyApp> {
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
-              children: <Widget>[start, stop, clear, status, log],
+              children: <Widget>[
+                start,
+                stop,
+                current,
+                Text(
+                  currentValue,
+                ),
+              ],
             ),
           ),
         ),
@@ -196,15 +156,11 @@ class _MyAppState extends State<MyApp> {
       callback,
       androidNotificationCallback: notificationCallback,
       settings: LocationSettings(
-        notificationTitle: "Start Location Tracking example",
-        notificationMsg: "Track location in background exapmle",
-        wakeLockTime: 20,
-        autoStop: false,
-        interval: 1
-      ),
+          notificationTitle: "Start Location Tracking example",
+          notificationMsg: "Track location in background exapmle",
+          wakeLockTime: 20,
+          autoStop: false,
+          interval: 1),
     );
-    setState(() {
-      isRunning = true;
-    });
   }
 }
